@@ -1,75 +1,118 @@
-import { Request, Response } from 'express';
-import { config } from '../config/env';
-import { sendTextMessage, sendTemplateMessage } from '../services/whatsapp.service';
+import { Request, Response } from "express";
+import whatsappService from "../services/whatsapp.service";
+import { WebhookPayload } from "../types/whatsapp.types";
 
-// Webhook verification (Meta requires this)
-export const verifyWebhook = (req: Request, res: Response) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+class WhatsAppController {
+  // POST /whatsapp/send-text
+  sendText = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { to, message } = req.body;
 
-  if (mode === 'subscribe' && token === config.meta.webhookVerifyToken) {
-    console.log('✅ Webhook verified');
-    res.status(200).send(challenge);
-  } else {
-    res.status(403).json({ message: 'Forbidden' });
-  }
-};
-
-// Receive incoming messages from Meta
-export const receiveMessage = async (req: Request, res: Response) => {
-  try {
-    const body = req.body;
-
-    if (body.object === 'whatsapp_business_account') {
-      const entry = body.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const message = changes?.value?.messages?.[0];
-
-      if (message) {
-        const from = message.from;
-        const text = message.text?.body?.toLowerCase();
-
-        console.log(`📩 Message from ${from}: ${text}`);
-
-        // Auto reply logic
-        if (text.includes('hello') || text.includes('hi')) {
-          await sendTextMessage(from, '🐪 Welcome to Share Desert Safari! How can we help you today?');
-        } else if (text.includes('book') || text.includes('safari')) {
-          await sendTemplateMessage(from, 'desert_safari_booking');
-        } else {
-          await sendTextMessage(from, '🌟 Thank you for contacting Share Desert Safari! Our team will get back to you shortly.');
-        }
+      if (!to || !message) {
+        res.status(400).json({ success: false, error: "'to' and 'message' are required" });
+        return;
       }
+
+      const result = await whatsappService.sendText({ to, message });
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.response?.data || error.message });
     }
+  };
 
-    res.status(200).json({ status: 'ok' });
-  } catch (error) {
-    console.error('❌ Error receiving message:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-};
+  // POST /whatsapp/send-template
+  sendTemplate = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { to, templateName, languageCode } = req.body;
 
-// Send a text message manually
-export const sendMessage = async (req: Request, res: Response) => {
-  try {
-    const { to, message } = req.body;
-    const result = await sendTextMessage(to, message);
-    res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    console.error('❌ Error sending message:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-};
+      if (!to || !templateName) {
+        res.status(400).json({ success: false, error: "'to' and 'templateName' are required" });
+        return;
+      }
 
-// Send a template message manually
-export const sendTemplate = async (req: Request, res: Response) => {
-  try {
-    const { to, templateName, languageCode } = req.body;
-    const result = await sendTemplateMessage(to, templateName, languageCode);
-    res.status(200).json({ success: true, data: result });
-  } catch (error) {
-    console.error('❌ Error sending template:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-};
+      const result = await whatsappService.sendTemplate({ to, templateName, languageCode });
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.response?.data || error.message });
+    }
+  };
+
+  // POST /whatsapp/send-image
+  sendImage = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { to, imageUrl, caption } = req.body;
+
+      if (!to || !imageUrl) {
+        res.status(400).json({ success: false, error: "'to' and 'imageUrl' are required" });
+        return;
+      }
+
+      const result = await whatsappService.sendImage({ to, imageUrl, caption });
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.response?.data || error.message });
+    }
+  };
+
+  // POST /whatsapp/send-buttons
+  sendButtons = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { to, bodyText, buttons } = req.body;
+
+      if (!to || !bodyText || !buttons?.length) {
+        res.status(400).json({ success: false, error: "'to', 'bodyText', and 'buttons' are required" });
+        return;
+      }
+
+      const result = await whatsappService.sendButtons({ to, bodyText, buttons });
+      res.status(200).json({ success: true, data: result });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.response?.data || error.message });
+    }
+  };
+
+  // GET /whatsapp/webhook  — Meta verification handshake
+  verifyWebhook = (req: Request, res: Response): void => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+
+    if (mode === "subscribe" && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+      console.log("✅ Webhook verified by Meta");
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  };
+
+  // POST /whatsapp/webhook  — Incoming messages from Meta
+  receiveWebhook = (req: Request, res: Response): void => {
+    const body: WebhookPayload = req.body;
+
+    if (body.object === "whatsapp_business_account") {
+      body.entry?.forEach((entry) => {
+        entry.changes?.forEach((change) => {
+          const messages = change.value?.messages;
+
+          if (messages) {
+            messages.forEach((msg) => {
+              console.log("📩 Message received:", {
+                from: msg.from,
+                type: msg.type,
+                text: msg.text?.body,
+              });
+
+              // 👇 Plug in your auto-reply / business logic here
+            });
+          }
+        });
+      });
+
+      res.sendStatus(200); // Must always return 200 to Meta
+    } else {
+      res.sendStatus(404);
+    }
+  };
+}
+
+export default new WhatsAppController();

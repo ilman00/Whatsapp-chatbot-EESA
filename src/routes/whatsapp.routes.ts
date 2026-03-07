@@ -1,19 +1,16 @@
-import { Router } from 'express';
-import {
-  verifyWebhook,
-  receiveMessage,
-  sendMessage,
-  sendTemplate,
-} from '../controllers/whatsapp.controller';
+import { Router } from "express";
+import whatsappController from "../controllers/whatsapp.controller";
 
 const router = Router();
 
-// Webhook routes (Meta)
-router.get('/webhook', verifyWebhook);       // Meta webhook verification
-router.post('/webhook', receiveMessage);      // Incoming messages
+// Outbound messages
+router.post("/send-text",     whatsappController.sendText);
+router.post("/send-template", whatsappController.sendTemplate);
+router.post("/send-image",    whatsappController.sendImage);
+router.post("/send-buttons",  whatsappController.sendButtons);
 
-// Manual sending routes
-router.post('/send-message', sendMessage);    // Send text message
-router.post('/send-template', sendTemplate);  // Send template message
+// Webhook (Meta calls these)
+router.get("/webhook",  whatsappController.verifyWebhook);
+router.post("/webhook", whatsappController.receiveWebhook);
 
 export default router;

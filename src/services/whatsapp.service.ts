@@ -1,38 +1,70 @@
-import axios from 'axios';
-import { config } from '../config/env';
+import axios, { AxiosInstance } from "axios";
+import { SendTextDto, SendTemplateDto, SendImageDto, SendButtonDto } from "../types/whatsapp.types";
 
-const BASE_URL = `https://graph.facebook.com/${config.meta.apiVersion}/${config.meta.phoneNumberId}`;
+class WhatsAppService {
+  private client: AxiosInstance;
 
-const headers = {
-  Authorization: `Bearer ${config.meta.accessToken}`,
-  'Content-Type': 'application/json',
-};
+  constructor() {
+    this.client = axios.create({
+      baseURL: `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}`,
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    });
+  }
 
-// Send a simple text message
-export const sendTextMessage = async (to: string, message: string) => {
-  const payload = {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'text',
-    text: { body: message },
-  };
+  async sendText({ to, message }: SendTextDto) {
+    const { data } = await this.client.post("/messages", {
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: { body: message },
+    });
+    return data;
+  }
 
-  const response = await axios.post(`${BASE_URL}/messages`, payload, { headers });
-  return response.data;
-};
+  async sendTemplate({ to, templateName, languageCode = "en_US" }: SendTemplateDto) {
+    const { data } = await this.client.post("/messages", {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: { code: languageCode },
+      },
+    });
+    return data;
+  }
 
-// Send a template message
-export const sendTemplateMessage = async (to: string, templateName: string, languageCode: string = 'en_US') => {
-  const payload = {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-    },
-  };
+  async sendImage({ to, imageUrl, caption }: SendImageDto) {
+    const { data } = await this.client.post("/messages", {
+      messaging_product: "whatsapp",
+      to,
+      type: "image",
+      image: { link: imageUrl, caption },
+    });
+    return data;
+  }
 
-  const response = await axios.post(`${BASE_URL}/messages`, payload, { headers });
-  return response.data;
-};
+  async sendButtons({ to, bodyText, buttons }: SendButtonDto) {
+    const { data } = await this.client.post("/messages", {
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: bodyText },
+        action: {
+          buttons: buttons.map((btn) => ({
+            type: "reply",
+            reply: { id: btn.id, title: btn.title },
+          })),
+        },
+      },
+    });
+    return data;
+  }
+}
+
+export default new WhatsAppService();
