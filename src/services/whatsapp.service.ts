@@ -5,6 +5,10 @@ class WhatsAppService {
   private client: AxiosInstance;
 
   constructor() {
+
+    console.log("Phone ID:", process.env.WHATSAPP_PHONE_NUMBER_ID);
+    console.log("Token:", process.env.WHATSAPP_TOKEN ? "loaded" : "MISSING ❌");
+    
     this.client = axios.create({
       baseURL: `https://graph.facebook.com/v19.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}`,
       headers: {
