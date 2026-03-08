@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import whatsappRoutes from './routes/whatsapp.routes';
 import express, { Request, Response } from 'express';
 
