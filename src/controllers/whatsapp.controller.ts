@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import whatsappService from "../services/whatsapp.service";
 import { WebhookPayload } from "../types/whatsapp.types";
+import { getAIReply } from "../services/ai.service";
 
 class WhatsAppController {
   // POST /whatsapp/send-text
@@ -86,31 +87,32 @@ class WhatsAppController {
   };
 
   // POST /whatsapp/webhook  — Incoming messages from Meta
-  receiveWebhook = (req: Request, res: Response): void => {
+  receiveWebhook = async (req: Request, res: Response): Promise<void> => {
     const body: WebhookPayload = req.body;
 
-    if (body.object === "whatsapp_business_account") {
-      body.entry?.forEach((entry) => {
-        entry.changes?.forEach((change) => {
-          const messages = change.value?.messages;
+    // Always return 200 to Meta immediately
+    res.sendStatus(200);
 
-          if (messages) {
-            messages.forEach((msg) => {
-              console.log("📩 Message received:", {
-                from: msg.from,
-                type: msg.type,
-                text: msg.text?.body,
-              });
+    if (body.object !== "whatsapp_business_account") return;
 
-              // 👇 Plug in your auto-reply / business logic here
-            });
-          }
-        });
-      });
+    for (const entry of body.entry ?? []) {
+      for (const change of entry.changes ?? []) {
+        const messages = change.value?.messages;
+        if (!messages) continue;
 
-      res.sendStatus(200); // Must always return 200 to Meta
-    } else {
-      res.sendStatus(404);
+        for (const msg of messages) {
+          console.log("📩 Message received:", {
+            from: msg.from,
+            type: msg.type,
+            text: msg.text?.body,
+          });
+
+          if (msg.type !== "text" || !msg.text?.body) continue;
+
+          const aiReply = await getAIReply(msg.from, msg.text.body);
+          await whatsappService.sendText({ to: msg.from, message: aiReply });
+        }
+      }
     }
   };
 }
