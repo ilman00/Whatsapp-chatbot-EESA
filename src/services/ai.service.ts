@@ -63,7 +63,10 @@ export async function getAIReply(
                 role: msg.role === "assistant" ? "model" : "user",
                 parts: [{ text: msg.content }],
             })),
-            systemInstruction: SYSTEM_PROMPT,
+            systemInstruction: {
+                role: "user",
+                parts: [{ text: SYSTEM_PROMPT }],
+            },
         });
 
         const result = await chat.sendMessage(userMessage);
