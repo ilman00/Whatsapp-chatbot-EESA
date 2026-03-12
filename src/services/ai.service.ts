@@ -54,24 +54,26 @@ export async function getAIReply(
     const history = conversationStore.get(userPhone)!;
 
     // Add the new user message
+    history.push({ role: "user", content: userMessage });
     try {
         // Gemini uses "model" and "parts" format, not "messages"
         // Add user message to local history store
-        history.push({ role: "user", content: userMessage });
 
         // Prepare history for Gemini (excluding the very last message we just added)
-        const pastMessages = history.slice(0, -1).map((msg) => ({
-            role: msg.role === "assistant" ? "model" : "user",
-            parts: [{ text: msg.content }],
-        }));
-
+        // Define the system instruction as a simple object with parts
         const chat = model.startChat({
-            history: pastMessages,
-            systemInstruction: SYSTEM_PROMPT, // You can also just pass the string directly
+            systemInstruction: {
+                role: "system", // This satisfies the TypeScript 'Content' interface
+                parts: [{ text: SYSTEM_PROMPT }],
+            },
+            history: history.slice(0, -1).map((msg) => ({
+                role: msg.role === "assistant" ? "model" : "user",
+                parts: [{ text: msg.content }],
+            })),
         });
 
-
         const result = await chat.sendMessage(userMessage);
+
         const replyText = result.response.text();
 
         // Save assistant reply to history
