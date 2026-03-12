@@ -1,7 +1,13 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-lite" });
+const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash", // Most stable for v1beta
+    generationConfig: {
+        maxOutputTokens: 200, // Keeps WhatsApp replies short
+        temperature: 0.7,     // Keeps Zara's personality natural
+    }
+});
 
 // ─── System prompt: Desert Safari persona ────────────────────────────────────
 const SYSTEM_PROMPT = `You are Zara, a friendly and knowledgeable booking assistant for "Share Desert Safari" — a premium desert safari experience company.
