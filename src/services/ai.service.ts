@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-lite" });
 
 // ─── System prompt: Desert Safari persona ────────────────────────────────────
 const SYSTEM_PROMPT = `You are Zara, a friendly and knowledgeable booking assistant for "Share Desert Safari" — a premium desert safari experience company.
@@ -83,7 +83,7 @@ export async function getAIReply(
         return replyText;
     } catch (error: any) {
         console.error("❌ AI Service error:", error.message);
-        return "Sorry, our assistant is temporarily unavailable. Please call us at +971-XX-XXX-XXXX 🙏";
+        return "Sorry, our assistant is temporarily unavailable. Please call us at +92-349-9038984 🙏";
     }
 }
 
