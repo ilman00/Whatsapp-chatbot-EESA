@@ -2,18 +2,17 @@ import { Request, Response } from "express";
 import whatsappService from "../services/whatsapp.service";
 import { WebhookPayload } from "../types/whatsapp.types";
 import { getAIReply } from "../services/ai.service";
+import { notifyOwner } from "../services/notification.service";
 
 class WhatsAppController {
   // POST /whatsapp/send-text
   sendText = async (req: Request, res: Response): Promise<void> => {
     try {
       const { to, message } = req.body;
-
       if (!to || !message) {
         res.status(400).json({ success: false, error: "'to' and 'message' are required" });
         return;
       }
-
       const result = await whatsappService.sendText({ to, message });
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
@@ -25,12 +24,10 @@ class WhatsAppController {
   sendTemplate = async (req: Request, res: Response): Promise<void> => {
     try {
       const { to, templateName, languageCode } = req.body;
-
       if (!to || !templateName) {
         res.status(400).json({ success: false, error: "'to' and 'templateName' are required" });
         return;
       }
-
       const result = await whatsappService.sendTemplate({ to, templateName, languageCode });
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
@@ -42,12 +39,10 @@ class WhatsAppController {
   sendImage = async (req: Request, res: Response): Promise<void> => {
     try {
       const { to, imageUrl, caption } = req.body;
-
       if (!to || !imageUrl) {
         res.status(400).json({ success: false, error: "'to' and 'imageUrl' are required" });
         return;
       }
-
       const result = await whatsappService.sendImage({ to, imageUrl, caption });
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
@@ -59,12 +54,10 @@ class WhatsAppController {
   sendButtons = async (req: Request, res: Response): Promise<void> => {
     try {
       const { to, bodyText, buttons } = req.body;
-
       if (!to || !bodyText || !buttons?.length) {
         res.status(400).json({ success: false, error: "'to', 'bodyText', and 'buttons' are required" });
         return;
       }
-
       const result = await whatsappService.sendButtons({ to, bodyText, buttons });
       res.status(200).json({ success: true, data: result });
     } catch (error: any) {
@@ -72,7 +65,7 @@ class WhatsAppController {
     }
   };
 
-  // GET /whatsapp/webhook  — Meta verification handshake
+  // GET /whatsapp/webhook — Meta verification handshake
   verifyWebhook = (req: Request, res: Response): void => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -86,7 +79,7 @@ class WhatsAppController {
     }
   };
 
-  // POST /whatsapp/webhook  — Incoming messages from Meta
+  // POST /whatsapp/webhook — Incoming messages from Meta
   receiveWebhook = async (req: Request, res: Response): Promise<void> => {
     const body: WebhookPayload = req.body;
 
@@ -109,8 +102,21 @@ class WhatsAppController {
 
           if (msg.type !== "text" || !msg.text?.body) continue;
 
-          const aiReply = await getAIReply(msg.from, msg.text.body);
-          await whatsappService.sendText({ to: msg.from, message: aiReply });
+          // Get AI reply (now returns { message, booking })
+          const { message, booking } = await getAIReply(msg.from, msg.text.body);
+
+          // Send reply to customer
+          await whatsappService.sendText({ to: msg.from, message });
+
+          // If a booking was completed, notify the owner
+          if (booking) {
+            console.log("🎉 Booking completed:", booking);
+
+            // Notify owner (WhatsApp + Email) — fire and forget
+            notifyOwner({ ...booking, phone: msg.from }).catch((err) =>
+              console.error("❌ notifyOwner failed:", err)
+            );
+          }
         }
       }
     }

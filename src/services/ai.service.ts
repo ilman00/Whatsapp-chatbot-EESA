@@ -1,10 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
 // ─── System prompt: Desert Safari persona ────────────────────────────────────
-const SYSTEM_PROMPT = `You are Warda, a friendly and knowledgeable booking assistant for "Share Desert Safari" — a premium desert safari experience company.
+const SYSTEM_PROMPT = `You are Zara, a friendly and knowledgeable booking assistant for "Share Desert Safari" — a premium desert safari experience company.
 
 Your role is to:
 - Warmly greet new customers and understand their needs
@@ -23,75 +23,123 @@ Key info:
 - Pickup: Available from all Dubai & Sharjah hotels (free)
 - Group discount: 10% off for 5+ people
 - Children under 3: Free | Ages 3–12: 50% discount
-- Booking: Via WhatsApp, website, or call +92-349-9038984
+- Booking: Via WhatsApp, website, or call +971-XX-XXX-XXXX
 
-If the customer wants to BOOK, collect: name, date, number of adults/children, package, hotel name.
-If you can't answer something, say: "Let me connect you with our team! Please call +92-349-9038984 or visit our website."
+If the customer wants to BOOK, collect ALL of these details one by one:
+1. Full name
+2. Safari date (DD/MM/YYYY)
+3. Number of adults
+4. Number of children (if any) and their ages
+5. Package choice (Morning / Evening / Overnight / Private)
+6. Hotel name and location for pickup
+
+IMPORTANT — When you have collected ALL booking details, end your reply with this exact JSON block on its own line:
+BOOKING_COMPLETE:{"name":"<name>","date":"<date>","adults":<number>,"children":<number>,"package":"<package>","hotel":"<hotel>","phone":"<userPhone>"}
+
+Example:
+BOOKING_COMPLETE:{"name":"Ahmed Ali","date":"20/03/2025","adults":2,"children":1,"package":"Evening Safari","hotel":"Atlantis The Palm","phone":"971501234567"}
+
+Do NOT include BOOKING_COMPLETE until every single field is collected and confirmed by the user.
+If you can't answer something, say: "Let me connect you with our team! Please call +971-XX-XXX-XXXX or visit our website."
 
 Always respond in the same language the customer is writing in (Arabic or English).
 Keep a warm, professional tone. Use 1–2 relevant emojis per message.`;
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+export interface BookingDetails {
+  name: string;
+  date: string;
+  adults: number;
+  children: number;
+  package: string;
+  hotel: string;
+  phone: string;
+}
+
+export interface AIReply {
+  message: string;
+  booking: BookingDetails | null;
+}
+
 // ─── In-memory conversation store (per phone number) ─────────────────────────
 interface Message {
-    role: "user" | "assistant";
-    content: string;
+  role: "user" | "assistant";
+  content: string;
 }
 
 const conversationStore = new Map<string, Message[]>();
+const MAX_HISTORY = 20;
 
-const MAX_HISTORY = 20; // keep last 20 messages per user
+// ─── Parse booking from AI reply ─────────────────────────────────────────────
+function extractBooking(text: string): { cleanText: string; booking: BookingDetails | null } {
+  const marker = "BOOKING_COMPLETE:";
+  const idx = text.indexOf(marker);
+
+  if (idx === -1) return { cleanText: text, booking: null };
+
+  const cleanText = text.slice(0, idx).trim();
+  const jsonStr = text.slice(idx + marker.length).trim();
+
+  try {
+    const booking: BookingDetails = JSON.parse(jsonStr);
+    return { cleanText, booking };
+  } catch {
+    console.error("❌ Failed to parse booking JSON:", jsonStr);
+    return { cleanText: text, booking: null };
+  }
+}
 
 // ─── Main function ────────────────────────────────────────────────────────────
 export async function getAIReply(
-    userPhone: string,
-    userMessage: string
-): Promise<string> {
-    // Get or create conversation history for this user
-    if (!conversationStore.has(userPhone)) {
-        conversationStore.set(userPhone, []);
+  userPhone: string,
+  userMessage: string
+): Promise<AIReply> {
+  if (!conversationStore.has(userPhone)) {
+    conversationStore.set(userPhone, []);
+  }
+
+  const history = conversationStore.get(userPhone)!;
+  history.push({ role: "user", content: userMessage });
+
+  try {
+    const chat = model.startChat({
+      history: history.slice(0, -1).map((msg) => ({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      })),
+      systemInstruction: {
+        role: "user",
+        parts: [{ text: SYSTEM_PROMPT }],
+      },
+    });
+
+    const result = await chat.sendMessage(userMessage);
+    const rawReply = result.response.text();
+
+    const { cleanText, booking } = extractBooking(rawReply);
+
+    // Save only the clean text (without BOOKING_COMPLETE JSON) to history
+    history.push({ role: "assistant", content: cleanText });
+
+    if (history.length > MAX_HISTORY) {
+      history.splice(0, history.length - MAX_HISTORY);
     }
 
-    const history = conversationStore.get(userPhone)!;
-
-    // Add the new user message
-    history.push({ role: "user", content: userMessage });
-    try {
-        // Gemini uses "model" and "parts" format, not "messages"
-        // Add user message to local history store
-
-        // Prepare history for Gemini (excluding the very last message we just added)
-        // Define the system instruction as a simple object with parts
-        const chat = model.startChat({
-            systemInstruction: {
-                role: "system", // This satisfies the TypeScript 'Content' interface
-                parts: [{ text: SYSTEM_PROMPT }],
-            },
-            history: history.slice(0, -1).map((msg) => ({
-                role: msg.role === "assistant" ? "model" : "user",
-                parts: [{ text: msg.content }],
-            })),
-        });
-
-        const result = await chat.sendMessage(userMessage);
-
-        const replyText = result.response.text();
-
-        // Save assistant reply to history
-        history.push({ role: "assistant", content: replyText });
-
-        // Trim history if too long
-        if (history.length > MAX_HISTORY) {
-            history.splice(0, history.length - MAX_HISTORY);
-        }
-
-        return replyText;
-    } catch (error: any) {
-        console.error("❌ AI Service error:", error.message);
-        return "Sorry, our assistant is temporarily unavailable. Please call us at +92-349-9038984 🙏";
+    // Clear conversation after successful booking
+    if (booking) {
+      conversationStore.delete(userPhone);
     }
+
+    return { message: cleanText, booking };
+  } catch (error: any) {
+    console.error("❌ AI Service error:", error.message);
+    return {
+      message: "Sorry, our assistant is temporarily unavailable. Please call us at +971-XX-XXX-XXXX 🙏",
+      booking: null,
+    };
+  }
 }
 
-// Clear conversation (e.g., after booking or on demand)
 export function clearConversation(userPhone: string): void {
-    conversationStore.delete(userPhone);
+  conversationStore.delete(userPhone);
 }
