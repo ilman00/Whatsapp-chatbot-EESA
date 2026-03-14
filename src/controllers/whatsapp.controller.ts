@@ -81,6 +81,7 @@ class WhatsAppController {
 
   // POST /whatsapp/webhook — Incoming messages from Meta
   receiveWebhook = async (req: Request, res: Response): Promise<void> => {
+    console.log("🔍 RAW WEBHOOK BODY:", JSON.stringify(req.body, null, 2));
     const body: WebhookPayload = req.body;
 
     // Always return 200 to Meta immediately
