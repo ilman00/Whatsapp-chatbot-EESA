@@ -1,10 +1,17 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  upsertCustomer,
+  saveMessage,
+  getRecentMessages,
+  clearMessages,
+  saveBooking,
+} from "./conversation.repository";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
 
 // ─── System prompt: Desert Safari persona ────────────────────────────────────
-const SYSTEM_PROMPT = `You are Warda, a friendly and knowledgeable booking assistant for "Share Desert Safari" — a premium desert safari experience company.
+const SYSTEM_PROMPT = `You are Zara, a friendly and knowledgeable booking assistant for "Share Desert Safari" — a premium desert safari experience company.
 
 Your role is to:
 - Warmly greet new customers and understand their needs
@@ -61,17 +68,10 @@ export interface AIReply {
   booking: BookingDetails | null;
 }
 
-// ─── In-memory conversation store (per phone number) ─────────────────────────
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
-
-const conversationStore = new Map<string, Message[]>();
-const MAX_HISTORY = 20;
-
 // ─── Extract BOOKING_COMPLETE from AI reply ───────────────────────────────────
-function extractBooking(text: string): { cleanText: string; booking: BookingDetails | null } {
+function extractBooking(
+  text: string
+): { cleanText: string; booking: Omit<BookingDetails, "phone"> | null } {
   const marker = "BOOKING_COMPLETE:";
   const idx = text.indexOf(marker);
 
@@ -94,21 +94,27 @@ export async function getAIReply(
   userPhone: string,
   userMessage: string
 ): Promise<AIReply> {
-  if (!conversationStore.has(userPhone)) {
-    conversationStore.set(userPhone, []);
-  }
+  // 1️⃣ Ensure customer exists in DB (upsert on every message)
+  await upsertCustomer(userPhone);
 
-  const history = conversationStore.get(userPhone)!;
-  history.push({ role: "user", content: userMessage });
+  // 2️⃣ Persist the incoming user message
+  await saveMessage(userPhone, "user", userMessage);
+
+  // 3️⃣ Load recent history from DB to rebuild Gemini context
+  const history = await getRecentMessages(userPhone, 20);
+
+  // The last message in history is the one we just saved (the current user msg).
+  // Gemini's startChat() takes prior history; the current message is sent via sendMessage().
+  // So we exclude the last item from history and send it separately.
+  const priorHistory = history.slice(0, -1);
 
   try {
-    // ✅ Exact same Gemini setup as your working version
     const chat = model.startChat({
       systemInstruction: {
         role: "system",
         parts: [{ text: SYSTEM_PROMPT }],
       },
-      history: history.slice(0, -1).map((msg) => ({
+      history: priorHistory.map((msg) => ({
         role: msg.role === "assistant" ? "model" : "user",
         parts: [{ text: msg.content }],
       })),
@@ -119,33 +125,36 @@ export async function getAIReply(
 
     const { cleanText, booking } = extractBooking(rawReply);
 
-    // Save only clean text to history (without BOOKING_COMPLETE marker)
-    history.push({ role: "assistant", content: cleanText });
+    // 4️⃣ Persist the assistant reply (clean, without BOOKING_COMPLETE marker)
+    await saveMessage(userPhone, "assistant", cleanText);
 
-    // Trim history if too long
-    if (history.length > MAX_HISTORY) {
-      history.splice(0, history.length - MAX_HISTORY);
-    }
-
-    // Clear conversation after booking so user can start fresh next time
     if (booking) {
-      conversationStore.delete(userPhone);
+      const fullBooking: BookingDetails = { ...booking, phone: userPhone };
+
+      // 5️⃣ Persist the booking record + increment customer counter
+      await saveBooking(fullBooking);
+
+      // 6️⃣ Clear messages so next conversation starts fresh
+      await clearMessages(userPhone);
+
+      console.log("🎉 Booking saved to DB:", fullBooking);
+
+      return { message: cleanText, booking: fullBooking };
     }
 
-    return {
-      message: cleanText,
-      booking: booking ? { ...booking, phone: userPhone } : null,
-    };
+    return { message: cleanText, booking: null };
+
   } catch (error: any) {
     console.error("❌ AI Service error:", error.message);
     return {
-      message: "Sorry, our assistant is temporarily unavailable. Please call us at +92-349-9038984 🙏",
+      message:
+        "Sorry, our assistant is temporarily unavailable. Please call us at +92-349-9038984 🙏",
       booking: null,
     };
   }
 }
 
-// Clear conversation (e.g., on demand)
-export function clearConversation(userPhone: string): void {
-  conversationStore.delete(userPhone);
+// ─── Clear conversation on demand (e.g. admin reset endpoint) ─────────────────
+export async function clearConversation(userPhone: string): Promise<void> {
+  await clearMessages(userPhone);
 }

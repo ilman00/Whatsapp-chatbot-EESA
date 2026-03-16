@@ -81,7 +81,6 @@ class WhatsAppController {
 
   // POST /whatsapp/webhook — Incoming messages from Meta
   receiveWebhook = async (req: Request, res: Response): Promise<void> => {
-    console.log("🔍 RAW WEBHOOK BODY:", JSON.stringify(req.body, null, 2));
     const body: WebhookPayload = req.body;
 
     // Always return 200 to Meta immediately
@@ -103,18 +102,18 @@ class WhatsAppController {
 
           if (msg.type !== "text" || !msg.text?.body) continue;
 
-          // Get AI reply (now returns { message, booking })
+          // ai.service handles: DB history load, message persistence, booking save
           const { message, booking } = await getAIReply(msg.from, msg.text.body);
 
-          // Send reply to customer
+          // Send AI reply back to customer
           await whatsappService.sendText({ to: msg.from, message });
 
-          // If a booking was completed, notify the owner
+          // Booking is already saved to DB inside ai.service.
+          // notifyOwner is purely for external notifications (WhatsApp + Email).
           if (booking) {
-            console.log("🎉 Booking completed:", booking);
+            console.log("🎉 Booking completed for:", booking.name, "| Package:", booking.package);
 
-            // Notify owner (WhatsApp + Email) — fire and forget
-            notifyOwner({ ...booking, phone: msg.from }).catch((err) =>
+            notifyOwner(booking).catch((err) =>
               console.error("❌ notifyOwner failed:", err)
             );
           }
