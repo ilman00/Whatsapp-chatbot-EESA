@@ -46,23 +46,29 @@ export async function saveMessage(
 /**
  * Load the most recent N messages for a phone number, oldest-first,
  * so they can be fed directly into the Gemini chat history.
+ *
+ * NOTE: LIMIT does not support prepared-statement placeholders (?) in mysql2
+ * when used inside a subquery. We sanitize `limit` to a safe integer and
+ * inline it directly into the SQL string, then use query() (not execute()).
  */
 export async function getRecentMessages(
   phone: string,
   limit: number = 20
 ): Promise<DBMessage[]> {
-  // Inner query gets the LAST `limit` rows; outer query re-sorts oldest-first
-  const [rows] = await pool.execute<any[]>(
+  // Sanitize: force a positive integer to prevent any injection risk
+  const safeLimit = Math.max(1, Math.floor(limit));
+
+  const [rows] = await pool.query<any[]>(
     `SELECT role, content
      FROM (
        SELECT role, content, created_at
        FROM messages
        WHERE phone_number = ?
        ORDER BY created_at DESC
-       LIMIT ?
+       LIMIT ${safeLimit}
      ) AS recent
      ORDER BY created_at ASC`,
-    [phone, limit]
+    [phone]
   );
 
   return rows as DBMessage[];
