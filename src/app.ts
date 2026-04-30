@@ -3,6 +3,7 @@ import cors from "cors";
 dotenv.config();
 
 import whatsappRoutes from './routes/whatsapp.routes';
+import adminRoutes from './routes/Admin.routes';
 import express, { Request, Response } from 'express';
 
 const app = express();
@@ -24,5 +25,6 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 app.use('/api', whatsappRoutes);
+app.use('/api/admin', adminRoutes);
 
 export default app;
