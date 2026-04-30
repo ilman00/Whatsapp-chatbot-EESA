@@ -54,7 +54,7 @@ function formatEmailNotification(booking: BookingDetails): string {
 export async function notifyOwner(booking: BookingDetails): Promise<void> {
   const results = await Promise.allSettled([
     notifyViaWhatsApp(booking),
-    notifyViaEmail(booking),
+    // notifyViaEmail(booking),
   ]);
 
   results.forEach((result, i) => {

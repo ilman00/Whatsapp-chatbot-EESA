@@ -57,6 +57,13 @@ export async function getRecentMessages(
 ): Promise<DBMessage[]> {
   // Sanitize: force a positive integer to prevent any injection risk
   const safeLimit = Math.max(1, Math.floor(limit));
+  if (!phone) {
+    throw new Error("getRecentMessages: phone is undefined/null");
+  }
+
+  if (!Number.isInteger(limit)) {
+    throw new Error("getRecentMessages: limit is not a number");
+  }
 
   const [rows] = await pool.query<any[]>(
     `SELECT role, content
