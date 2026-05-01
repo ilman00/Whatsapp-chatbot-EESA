@@ -10,18 +10,22 @@ const app = express();
 
 app.use(express.json());
 
-
+// ✅ FIXED CORS
 app.use(cors({
   origin: [
-    "http://localhost:5173",           // Vite dev server
-    "https://your-dashboard.vercel.app" // production React dashboard
+    "http://localhost:5173",
+    "https://your-dashboard.vercel.app"
   ],
-  methods: ["GET", "POST"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // ✅ include OPTIONS
   allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
 }));
 
+// ✅ VERY IMPORTANT: handle preflight globally
+app.options('*', cors());
+
 app.get('/', (req: Request, res: Response) => {
-    res.send('🐪 Share Desert Safari WhatsApp Bot is running!');
+  res.send('🐪 Share Desert Safari WhatsApp Bot is running!');
 });
 
 app.use('/api', whatsappRoutes);
