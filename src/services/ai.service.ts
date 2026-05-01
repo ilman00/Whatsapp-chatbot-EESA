@@ -14,77 +14,58 @@ const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" 
 const SYSTEM_PROMPT = `You are Zara, a professional booking assistant for "Share Desert Safari".
 
 Your role is to:
-- Provide accurate information about safari packages, pricing, timings, and inclusions
-- Assist users in booking a safari efficiently
-- Ask only relevant questions required to complete a booking
+- Provide accurate info about packages, pricing, and bookings.
+- Assist users in booking a safari efficiently.
+- Acknowledge if a user has booked with us before based on history.
 
 STRICT COMMUNICATION RULES:
-- Keep responses VERY SHORT (1–2 sentences max)
-- Do NOT use friendly or emotional phrases (e.g., "Happy to help", "Great choice", "Glad to hear")
-- Do NOT use unnecessary emojis (max 1 if needed, otherwise none)
-- Be direct, clear, and professional
-- Do NOT add extra explanations unless asked
-- Ask ONE question at a time during booking
+- Keep responses VERY SHORT (1–2 sentences max).
+- Do NOT use emotional phrases (e.g., "Happy to help", "Glad to hear").
+- Do NOT use unnecessary emojis (max 1).
+- Be direct and professional.
+- Ask ONE question at a time during booking.
 
-Our Packages:
+OUR PACKAGES:
 
 Evening Desert Safari:
 - Shared: AED 150/person
 - VIP: AED 200/person
 - Private: AED 600 per car (up to 6 people)
 - Timing: 3:00 PM – 9:00 PM
-- Includes: Pickup & drop, dune bashing, sandboarding, camel ride, BBQ dinner, live shows, henna, drinks
+- Includes: Pickup/drop, dune bashing, sandboarding, BBQ dinner, shows.
 
 Evening Safari with Quad Bike:
-- AED 250/person
-- Includes: Evening safari + 30 mins quad bike
+- AED 250/person (Includes 30 mins quad bike)
 
 Evening Safari with Dune Buggy:
-- AED 600–1000
-- Includes: Safari + buggy ride + dinner
+- AED 600–1000 (Based on buggy type)
 
 Morning Desert Safari:
-- AED 120/person
-- Timing: 6:00 AM – 10:00 AM
-- Includes: Pickup, dune bashing, sandboarding
-
-Private Morning Safari:
-- AED 500 per car
-- Includes: Private 4x4, dune bashing, camel ride
+- Shared: AED 120/person (6:00 AM – 10:00 AM)
+- Private: AED 500 per car
 
 Overnight Safari:
-- AED 350/person
-- Includes: Evening safari + overnight stay + breakfast
-
-Private Desert Experience:
-- AED 800+
-- Fully private and customizable
+- AED 350/person (Includes stay & breakfast)
 
 Key info:
-- Pickup: Dubai & Sharjah hotels (free)
-- Group discount: 10% for 5+ people
-- Children under 3: Free | 3–12: 50% discount
-- Contact: +92-349-9038984
+- Pickup: Free from Dubai & Sharjah hotels.
+- Discounts: 10% for 5+ people. Under 3: Free. 3–12: 50% off.
+- Contact: +92-349-9038984.
 
 BOOKING FLOW:
-If the user wants to book, collect ALL details step-by-step (ask ONE at a time):
+Collect these details one by one:
 1. Full name
-2. Safari date (DD/MM/YYYY)
+2. Safari date (Accept any format: e.g., "Tomorrow", "Next Friday", or "12 May")
 3. Number of adults
 4. Number of children and ages
-5. Package
+5. Package choice
 6. Hotel name/location
 
 After ALL details are confirmed, output:
-
 BOOKING_COMPLETE:{"name":"<n>","date":"<date>","adults":<number>,"children":<number>,"package":"<package>","hotel":"<hotel>"}
 
-Do NOT output BOOKING_COMPLETE until all fields are collected.
-
-If unsure about any query, respond:
-"Contact support at +92-349-9038984."
-
-Respond in the same language as the user (Arabic or English).`;
+If unsure, respond: "Contact support at +92-349-9038984."
+Respond in the user's language (Arabic or English).`;
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface BookingDetails {
   name: string;
@@ -127,19 +108,25 @@ export async function getAIReply(
   userPhone: string,
   userMessage: string
 ): Promise<AIReply> {
-  // 1️⃣ Ensure customer exists in DB (upsert on every message)
   await upsertCustomer(userPhone);
-
-  // 2️⃣ Persist the incoming user message
   await saveMessage(userPhone, "user", userMessage);
 
-  // 3️⃣ Load recent history from DB to rebuild Gemini context
-  const history = await getRecentMessages(userPhone, 20);
+  // Load history to provide context to Gemini
+  const history = await getRecentMessages(userPhone, 25); // Increased limit for better memory
+  const priorHistoryRaw = history.slice(0, -1);
 
-  // The last message in history is the one we just saved (the current user msg).
-  // Gemini's startChat() takes prior history; the current message is sent via sendMessage().
-  // So we exclude the last item from history and send it separately.
-  const priorHistory = history.slice(0, -1);
+  let formattedHistory = priorHistoryRaw.map((msg) => ({
+    role: msg.role === "assistant" ? "model" : "user",
+    parts: [{ text: msg.content }],
+  }));
+
+  // Ensure history starts with 'user' role
+  const firstUserIndex = formattedHistory.findIndex((m) => m.role === "user");
+  if (firstUserIndex !== -1) {
+    formattedHistory = formattedHistory.slice(firstUserIndex);
+  } else {
+    formattedHistory = [];
+  }
 
   try {
     const chat = model.startChat({
@@ -147,30 +134,21 @@ export async function getAIReply(
         role: "system",
         parts: [{ text: SYSTEM_PROMPT }],
       },
-      history: priorHistory.map((msg) => ({
-        role: msg.role === "assistant" ? "model" : "user",
-        parts: [{ text: msg.content }],
-      })),
+      history: formattedHistory,
     });
 
     const result = await chat.sendMessage(userMessage);
     const rawReply = result.response.text();
-
     const { cleanText, booking } = extractBooking(rawReply);
 
-    // 4️⃣ Persist the assistant reply (clean, without BOOKING_COMPLETE marker)
     await saveMessage(userPhone, "assistant", cleanText);
 
     if (booking) {
       const fullBooking: BookingDetails = { ...booking, phone: userPhone };
-
-      // 5️⃣ Persist the booking record + increment customer counter
       await saveBooking(fullBooking);
-
-      // 6️⃣ Clear messages so next conversation starts fresh
-      await clearMessages(userPhone);
-
-      console.log("🎉 Booking saved to DB:", fullBooking);
+      
+      // ✅ clearMessages(userPhone) is REMOVED to keep history
+      console.log("🎉 Booking saved. History retained for context.");
 
       return { message: cleanText, booking: fullBooking };
     }
@@ -180,8 +158,7 @@ export async function getAIReply(
   } catch (error: any) {
     console.error("❌ AI Service error:", error.message);
     return {
-      message:
-        "Sorry, our assistant is temporarily unavailable. Please call us at +92-349-9038984 🙏",
+      message: "Sorry, our assistant is temporarily unavailable. Please call +92-349-9038984.",
       booking: null,
     };
   }
