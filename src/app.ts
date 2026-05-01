@@ -21,8 +21,6 @@ app.use(cors({
   credentials: true
 }));
 
-// ✅ VERY IMPORTANT: handle preflight globally
-app.options('*', cors());
 
 app.get('/', (req: Request, res: Response) => {
   res.send('🐪 Share Desert Safari WhatsApp Bot is running!');
