@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import {
   upsertCustomer,
   saveMessage,
@@ -7,8 +7,7 @@ import {
   saveBooking,
 } from "./conversation.repository";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
 // ─── System prompt: Desert Safari persona ────────────────────────────────────
 const SYSTEM_PROMPT = `You are Zara, a professional booking assistant for "Share Desert Safari".
@@ -66,6 +65,7 @@ BOOKING_COMPLETE:{"name":"<n>","date":"<date>","adults":<number>,"children":<num
 
 If unsure, respond: "Contact support at +92-349-9038984."
 Respond in the user's language (Arabic or English).`;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface BookingDetails {
   name: string;
@@ -111,34 +111,29 @@ export async function getAIReply(
   await upsertCustomer(userPhone);
   await saveMessage(userPhone, "user", userMessage);
 
-  // Load history to provide context to Gemini
-  const history = await getRecentMessages(userPhone, 25); // Increased limit for better memory
-  const priorHistoryRaw = history.slice(0, -1);
+  // Load history for context
+  const history = await getRecentMessages(userPhone, 25);
+  const priorHistoryRaw = history.slice(0, -1); // exclude the message we just saved
 
-  let formattedHistory = priorHistoryRaw.map((msg) => ({
-    role: msg.role === "assistant" ? "model" : "user",
-    parts: [{ text: msg.content }],
-  }));
-
-  // Ensure history starts with 'user' role
-  const firstUserIndex = formattedHistory.findIndex((m) => m.role === "user");
-  if (firstUserIndex !== -1) {
-    formattedHistory = formattedHistory.slice(firstUserIndex);
-  } else {
-    formattedHistory = [];
-  }
+  // Build Groq-compatible messages array (OpenAI format)
+  const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...priorHistoryRaw.map((msg) => ({
+      role: msg.role as "user" | "assistant",
+      content: msg.content,
+    })),
+    { role: "user", content: userMessage },
+  ];
 
   try {
-    const chat = model.startChat({
-      systemInstruction: {
-        role: "system",
-        parts: [{ text: SYSTEM_PROMPT }],
-      },
-      history: formattedHistory,
+    const response = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile", // or "mixtral-8x7b-32768", "gemma2-9b-it"
+      messages,
+      max_tokens: 300,
+      temperature: 0.5,
     });
 
-    const result = await chat.sendMessage(userMessage);
-    const rawReply = result.response.text();
+    const rawReply = response.choices[0]?.message?.content ?? "";
     const { cleanText, booking } = extractBooking(rawReply);
 
     await saveMessage(userPhone, "assistant", cleanText);
@@ -146,10 +141,7 @@ export async function getAIReply(
     if (booking) {
       const fullBooking: BookingDetails = { ...booking, phone: userPhone };
       await saveBooking(fullBooking);
-      
-      // ✅ clearMessages(userPhone) is REMOVED to keep history
       console.log("🎉 Booking saved. History retained for context.");
-
       return { message: cleanText, booking: fullBooking };
     }
 
